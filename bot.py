@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация бота и диспетчера
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=8799876662:AAFgzZbDYDK3Bluzc9uCf5fswPtmu6qsjqQ)
 dp = Dispatcher()
 
 
