@@ -11,14 +11,14 @@ from aiohttp import web
 
 # ==================== НАСТРОЙКИ ====================
 # Переменные окружения (задаются в Railway)
-BOT_TOKEN = os.getenv("8799876662:AAFgzZbDYDK3Bluzc9uCf5fswPtmu6qsjqQ")
-ADMIN_CHAT_ID = os.getenv("-5278416334")
-API_URL = os.getenv("https://cyberx302.langame.ru/public_api/products/list")
+BOT_TOKEN = "8799876662:AAFgzZbDYDK3Bluzc9uCf5fswPtmu6qsjqQ"
+ADMIN_CHAT_ID = "-5278416334"
+API_URL = "https://cyberx302.langame.ru/public_api/products/list"
 LOW_STOCK_THRESHOLD = int(os.getenv("LOW_STOCK_THRESHOLD", "5"))
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "3600"))  # 1 час
 
 # Webhook-домен (выдаётся Railway автоматически)
-RAILWAY_PUBLIC_DOMAIN = os.getenv("https://superbot-production-5df4.up.railway.app/")
+RAILWAY_PUBLIC_DOMAIN = "https://superbot-production-5df4.up.railway.app"
 WEBHOOK_PATH = "/webhook"
 
 # Настройка логирования
