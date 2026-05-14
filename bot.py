@@ -18,7 +18,7 @@ LOW_STOCK_THRESHOLD = int(os.getenv("LOW_STOCK_THRESHOLD", "5"))
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "3600"))  # 1 час
 
 # Webhook-домен (выдаётся Railway автоматически)
-RAILWAY_PUBLIC_DOMAIN = os.getenv("")
+RAILWAY_PUBLIC_DOMAIN = os.getenv("https://superbot-production-5df4.up.railway.app/")
 WEBHOOK_PATH = "/webhook"
 
 # Настройка логирования
