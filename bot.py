@@ -6,27 +6,28 @@ from datetime import datetime
 import aiohttp
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiohttp import web
 
 # ==================== НАСТРОЙКИ ====================
-# Переменные окружения (задаются в Railway)
-BOT_TOKEN = "8799876662:AAFgzZbDYDK3Bluzc9uCf5fswPtmu6qsjqQ"
-ADMIN_CHAT_ID = "-5278416334"
-API_URL = "https://cyberx302.langame.ru/public_api/products/list"
-LOW_STOCK_THRESHOLD = int(os.getenv("LOW_STOCK_THRESHOLD", "5"))
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+API_URL = os.getenv("API_URL")
+LOW_STOCK_THRESHOLD = int(os.getenv("LOW_STOCK_THRESHOLD", "10"))
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "3600"))  # 1 час
 
-# Webhook-домен (выдаётся Railway автоматически)
-RAILWAY_PUBLIC_DOMAIN = "https://superbot-production-5df4.up.railway.app"
-WEBHOOK_PATH = "/webhook"
+# Проверка обязательных переменных
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не задан в переменных окружения")
+if not ADMIN_CHAT_ID:
+    raise ValueError("ADMIN_CHAT_ID не задан в переменных окружения")
+if not API_URL:
+    raise ValueError("API_URL не задан в переменных окружения")
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Инициализация бота и диспетчера
-bot = Bot(token="8799876662:AAFgzZbDYDK3Bluzc9uCf5fswPtmu6qsjqQ")
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
@@ -34,16 +35,25 @@ dp = Dispatcher()
 async def fetch_low_stock_products(session: aiohttp.ClientSession, threshold: int):
     """Получает список товаров и возвращает те, у которых остаток ниже порога."""
     try:
-        async with session.get(API_URL) as response:
+        # Убедимся, что URL строка
+        url = str(API_URL)
+        logger.info(f"Запрос к API: {url}")
+        async with session.get(url) as response:
             if response.status != 200:
                 logger.error(f"API вернул статус {response.status}")
                 return []
-
             data = await response.json()
             # Предполагаемая структура: {"products": [{"name": "...", "quantity": N}, ...]}
+            # Если структура другая, нужно адаптировать
             products = data.get("products", [])
+            if not products:
+                logger.warning("API не вернул список products, проверьте структуру ответа")
+                return []
             low_stock = [p for p in products if p.get("quantity", 0) < threshold]
             return low_stock
+    except aiohttp.ClientError as e:
+        logger.error(f"Ошибка соединения с API: {e}")
+        return []
     except Exception as e:
         logger.error(f"Ошибка при запросе к API: {e}")
         return []
@@ -88,6 +98,7 @@ async def cmd_start(message: types.Message):
         "Команда /check — ручная проверка.\n"
         "Уведомления о заканчивающихся товарах будут приходить автоматически."
     )
+    logger.info(f"Пользователь {message.from_user.id} использовал /start")
 
 
 @dp.message(Command("check"))
@@ -97,53 +108,23 @@ async def cmd_check(message: types.Message):
     async with aiohttp.ClientSession() as session:
         low_stock = await fetch_low_stock_products(session, LOW_STOCK_THRESHOLD)
         if low_stock:
-            # Отправляем уведомление тому, кто вызвал команду
             text = "⚠️ Товары с низким остатком:\n\n"
             for p in low_stock:
                 text += f"• {p.get('name', 'Без названия')} — {p.get('quantity', '?')} шт.\n"
             await message.answer(text)
         else:
             await message.answer("✅ Все товары в достаточном количестве.")
+    logger.info(f"Пользователь {message.from_user.id} использовал /check")
 
 
-# ==================== НАСТРОЙКА ВЕБХУКА ====================
-async def on_startup(bot: Bot):
-    """Выполняется при запуске приложения."""
+# ==================== ЗАПУСК БОТА (POLLING) ====================
+async def main():
     # Запускаем фоновую задачу планировщика
     asyncio.create_task(scheduled_checker())
-
-    # Устанавливаем вебхук, если у нас есть домен
-    if RAILWAY_PUBLIC_DOMAIN:
-        webhook_url = f"https://{RAILWAY_PUBLIC_DOMAIN}{WEBHOOK_PATH}"
-        await bot.set_webhook(webhook_url)
-        logger.info(f"Webhook установлен: {webhook_url}")
-    else:
-        logger.warning("RAILWAY_PUBLIC_DOMAIN не задан, вебхук не установлен")
-
-
-async def on_shutdown(bot: Bot):
-    """Выполняется при остановке приложения."""
-    await bot.delete_webhook()
-    logger.info("Webhook удалён")
-
-
-# ==================== ЗАПУСК ПРИЛОЖЕНИЯ ====================
-def main():
-    # Создаём aiohttp-приложение
-    app = web.Application()
-
-    # Регистрируем обработчик вебхуков
-    webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
-    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
-
-    # Устанавливаем функции запуска и остановки
-    app.on_startup.append(lambda _: on_startup(bot))
-    app.on_shutdown.append(lambda _: on_shutdown(bot))
-
-    # Запускаем приложение
-    port = int(os.getenv("PORT", "8080"))
-    web.run_app(app, host="0.0.0.0", port=port)
+    # Запускаем polling
+    logger.info("Бот запущен в режиме polling")
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
