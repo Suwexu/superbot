@@ -7,21 +7,18 @@ import aiohttp
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 
-# ==================== НАСТРОЙКИ = ===================
+# ==================== НАСТРОЙКИ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 API_URL = os.getenv("API_URL", "https://cyberx302.langame.ru/public_api/products/list")
 LOW_STOCK_THRESHOLD = int(os.getenv("LOW_STOCK_THRESHOLD", "10"))
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "3600"))  # 1 час
-PUBLIC_API_TOKEN = os.getenv("PUBLIC_API_TOKEN")  # Ключ для X-Auth-Token
 
 # Проверка обязательных переменных
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан в переменных окружения")
 if not ADMIN_CHAT_ID:
     raise ValueError("ADMIN_CHAT_ID не задан в переменных окружения")
-if not PUBLIC_API_TOKEN:
-    raise ValueError("PUBLIC_API_TOKEN не задан в переменных окружения (нужен для доступа к API Langame)")
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -37,11 +34,12 @@ async def fetch_low_stock_products(session: aiohttp.ClientSession, threshold: in
     """Получает список товаров и возвращает те, у которых остаток ниже порога."""
     try:
         url = str(API_URL).strip()
-        headers = {
-            "X-Auth-Token": PUBLIC_API_TOKEN,
-            "User-Agent": "Mozilla/5.0 (compatible; TelegramBot/1.0)"
-        }
         logger.info(f"Запрос к API: {url}")
+        
+        # Добавляем только User-Agent для имитации браузера
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
         
         async with session.get(url, headers=headers) as response:
             if response.status != 200:
@@ -50,18 +48,30 @@ async def fetch_low_stock_products(session: aiohttp.ClientSession, threshold: in
                 return []
             
             data = await response.json()
-            # Предполагаемая структура: {"products": [{"name": "...", "quantity": N}, ...]}
-            # Если структура иная, адаптируйте под неё
-            products = data.get("products", [])
+            logger.info(f"Ответ API получен, тип данных: {type(data)}")
+            
+            # Пробуем разные варианты структуры ответа
+            products = []
+            
+            # Вариант 1: {"products": [...]}
+            if isinstance(data, dict) and "products" in data:
+                products = data.get("products", [])
+            # Вариант 2: просто массив товаров
+            elif isinstance(data, list):
+                products = data
+            # Вариант 3: {"data": {"products": [...]}}
+            elif isinstance(data, dict) and "data" in data and "products" in data["data"]:
+                products = data["data"].get("products", [])
+            else:
+                logger.warning(f"Неизвестная структура API: {str(data)[:200]}")
+                return []
+            
             if not products:
-                logger.warning("API не вернул список products, проверьте структуру ответа")
-                # Попробуем альтернативный путь: возможно, данные лежат прямо в корне
-                if isinstance(data, list):
-                    products = data
-                else:
-                    logger.debug(f"Ответ API: {str(data)[:200]}")
+                logger.warning("API не вернул список товаров")
+                return []
             
             low_stock = [p for p in products if p.get("quantity", 0) < threshold]
+            logger.info(f"Найдено товаров: {len(products)}, с низким остатком: {len(low_stock)}")
             return low_stock
             
     except aiohttp.ClientError as e:
@@ -82,9 +92,12 @@ async def notify_low_stock():
         
         message = "⚠️ <b>ВНИМАНИЕ! Заканчиваются товары:</b>\n\n"
         for product in low_stock:
-            name = product.get("name", "Без названия")
-            qty = product.get("quantity", "?")
+            name = product.get("name", product.get("title", "Без названия"))
+            qty = product.get("quantity", product.get("stock", "?"))
             message += f"• {name} — осталось: {qty} шт.\n"
+        
+        # Добавляем время проверки
+        message += f"\n📅 Проверка выполнена: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
         
         try:
             await bot.send_message(ADMIN_CHAT_ID, message, parse_mode="HTML")
@@ -96,6 +109,8 @@ async def notify_low_stock():
 # ==================== ФОНОВАЯ ЗАДАЧА ====================
 async def scheduled_checker():
     """Периодическая проверка остатков."""
+    # Ждём 10 секунд перед первым запуском, чтобы бот успел инициализироваться
+    await asyncio.sleep(10)
     while True:
         now = datetime.now()
         logger.info(f"Запуск плановой проверки в {now.strftime('%H:%M:%S')}")
@@ -107,23 +122,39 @@ async def scheduled_checker():
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
-        "👋 Бот мониторинга остатков запущен!\n"
-        "Команда /check — ручная проверка.\n"
+        "👋 Бот мониторинга остатков запущен!\n\n"
+        "📋 Команды:\n"
+        "/check — ручная проверка остатков\n"
+        "/status — статус бота\n\n"
         "Уведомления о заканчивающихся товарах будут приходить автоматически."
     )
     logger.info(f"Пользователь {message.from_user.id} использовал /start")
 
 
+@dp.message(Command("status"))
+async def cmd_status(message: types.Message):
+    """Проверка статуса бота"""
+    await message.answer(
+        "✅ Бот работает\n"
+        f"📊 Интервал проверки: {CHECK_INTERVAL} сек.\n"
+        f"⚠️ Порог остатка: {LOW_STOCK_THRESHOLD} шт.\n"
+        f"🔗 API: {API_URL}"
+    )
+
+
 @dp.message(Command("check"))
 async def cmd_check(message: types.Message):
-    await message.answer("🔄 Проверяю остатки...")
+    """Ручная проверка остатков"""
+    await message.answer("🔄 Проверяю остатки, подождите...")
     async with aiohttp.ClientSession() as session:
         low_stock = await fetch_low_stock_products(session, LOW_STOCK_THRESHOLD)
         if low_stock:
-            text = "⚠️ Товары с низким остатком:\n\n"
+            text = "⚠️ <b>Товары с низким остатком:</b>\n\n"
             for p in low_stock:
-                text += f"• {p.get('name', 'Без названия')} — {p.get('quantity', '?')} шт.\n"
-            await message.answer(text)
+                name = p.get("name", p.get("title", "Без названия"))
+                qty = p.get("quantity", p.get("stock", "?"))
+                text += f"• {name} — осталось: {qty} шт.\n"
+            await message.answer(text, parse_mode="HTML")
         else:
             await message.answer("✅ Все товары в достаточном количестве.")
     logger.info(f"Пользователь {message.from_user.id} использовал /check")
@@ -131,8 +162,10 @@ async def cmd_check(message: types.Message):
 
 # ==================== ЗАПУСК (POLLING) ====================
 async def main():
+    logger.info("🚀 Бот запускается в режиме polling...")
+    # Запускаем фоновую задачу
     asyncio.create_task(scheduled_checker())
-    logger.info("Бот запущен в режиме polling")
+    # Запускаем долгие опросы
     await dp.start_polling(bot)
 
 
